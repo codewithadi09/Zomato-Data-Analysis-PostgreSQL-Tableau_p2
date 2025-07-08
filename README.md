@@ -39,323 +39,89 @@ This foundational phase addressed critical data quality and infrastructure chall
 
 This phase will focus on extracting actionable insights directly from the normalized PostgreSQL database to answer key business questions.
 
--- Business Problem 1: Identifying Top-Performing Restaurants
--- Question: As a Zomato analyst or a potential investor, which restaurants are the "best" and most reliable in terms of customer satisfaction?
---           We need to identify top-rated restaurants that also have a significant number of reviews (votes) to ensure their ratings are credible,
---           not just based on a few opinions.
+#### **Problem 1: Identifying Top-Performing Restaurants**
 
--- Business Value:
--- - For Zomato: Enables featuring these restaurants in "Editor's Picks," "Top Rated" lists, or recommending them to users.
--- - For Restaurants: Provides benchmarks against top performers, helping them understand what drives success.
--- - For Investors: Helps identify high-potential businesses for investment.
+* **Business Question:** Which restaurants are the "best" and most reliable in terms of customer satisfaction, considering both high ratings and a significant number of votes?
+* **Key Findings/Insights:**
+    * The analysis, after careful deduplication of restaurant branches, consistently highlighted establishments like "Byg Brewski Brewing Company" and "AB's - Absolute Barbecues" among the top performers. These are recognized brands with high average ratings (e.g., 4.9) backed by a substantial volume of customer votes (e.g., 80,000+).
+    * The application of a minimum vote threshold (e.g., >= 50 votes) was crucial to ensure the credibility of high ratings, filtering out nascent establishments with potentially skewed averages.
+* **Business Implications/Recommendations:**
+    * **For Zomato:** These top-tier restaurants are prime candidates for prominent featuring in "Editor's Picks," "Top Rated" lists, and targeted user recommendations, driving engagement and trust in the platform.
+    * **For New Entrants/Existing Restaurants:** Top performers serve as benchmarks. Analyzing their operational models, cuisine offerings, and service types can provide valuable insights for improving customer satisfaction and market positioning.
+* [View SQL Query](scripts/sql/top_10_restaurants.sql)
 
--- SQL Concepts Used:
--- - CTEs (Common Table Expressions) (`WITH ... AS`): Used to break down complex queries into logical, readable steps (`RankedBranches` and `UniqueRankedBranches`).
--- - JOINs (INNER & LEFT): Combining data from `restaurants`, `localities`, `cities`, `restaurant_types`, `restaurant_cuisines`, and `cuisines` tables
---   based on their foreign key relationships. `LEFT JOIN` is used for `restaurant_types` and `cuisines` to include restaurants even if they
---   somehow don't have a linked type or cuisine (though in a clean dataset, they should).
--- - AVG(), SUM(): Aggregate functions to calculate the average rating and total votes for each restaurant.
--- - GROUP BY: Groups the rows by `restaurant_id` (and other descriptive columns) so that aggregate functions work per restaurant.
--- - HAVING Clause: Filters the *grouped* results. This is essential for applying conditions on aggregate values (e.g., `SUM(r.votes) >= 50`).
---   You cannot use `WHERE` on aggregate values.
--- - DISTINCT ON (column1, column2): Used for advanced deduplication. It selects the *first* row (based on the `ORDER BY` clause) for each unique
---   combination of `restaurant_name` and `address`, ensuring we get truly unique restaurant branches.
--- - ORDER BY: Sorts the results, first by `average_rating` (highest first), then by `total_votes` (more votes break ties).
---   Crucially, it also dictates which row is chosen when `DISTINCT ON` applies.
--- - LIMIT: Restricts the output to the top N results.
--- - STRING_AGG(DISTINCT column, separator): An advanced aggregate function that concatenates all distinct values (e.g., cuisine names)
---   for each grouped entity into a single comma-separated string.
+#### **Problem 2: Analyzing Cuisine Popularity and Performance**
 
-WITH RankedBranches AS (
-    SELECT
-        r.restaurant_id,
-        r.name AS restaurant_name,
-        r.address,
-        l.locality_name,
-        c.city_name,
-        rt.type_name AS restaurant_type,
-        AVG(r.rate) AS branch_avg_rating,
-        SUM(r.votes) AS branch_total_votes,
-        STRING_AGG(DISTINCT cz.cuisine_name, ', ') AS cuisines_offered
-    FROM
-        restaurants r
-    JOIN
-        localities l ON r.locality_id = l.locality_id
-    JOIN
-        cities c ON r.city_id = c.city_id
-    LEFT JOIN
-        restaurant_types rt ON r.restaurant_type_id = rt.restaurant_type_id
-    LEFT JOIN
-        restaurant_cuisines rc ON r.restaurant_id = rc.restaurant_id
-    LEFT JOIN
-        cuisines cz ON rc.cuisine_id = cz.cuisine_id
-    WHERE
-        r.rate IS NOT NULL AND r.votes IS NOT NULL AND r.votes > 0
-    GROUP BY
-        r.restaurant_id, r.name, r.address, l.locality_name, c.city_name, rt.type_name
-    HAVING
-        SUM(r.votes) >= 50 -- Minimum vote threshold for credibility
-),
-UniqueRankedBranches AS (
-    SELECT DISTINCT ON (restaurant_name, address)
-        restaurant_name,
-        address,
-        locality_name,
-        city_name,
-        restaurant_type,
-        branch_avg_rating AS average_rating,
-        branch_total_votes AS total_votes,
-        cuisines_offered
-    FROM
-        RankedBranches
-    ORDER BY
-        restaurant_name, address, -- Required for DISTINCT ON to pick a consistent row
-        branch_avg_rating DESC,   -- Prioritize higher rating for duplicates
-        branch_total_votes DESC   -- Then higher votes for duplicates
-)
-SELECT
-    restaurant_name,
-    address,
-    locality_name,
-    city_name,
-    restaurant_type,
-    average_rating,
-    total_votes,
-    cuisines_offered
-FROM
-    UniqueRankedBranches
-ORDER BY
-    average_rating DESC,
-    total_votes DESC
-LIMIT 10;
+* **Business Question:** What are the most prevalent cuisine types in terms of restaurant count, and how do their average ratings and costs compare?
+* **Key Findings/Insights:**
+    * "North Indian" (17,549 restaurants) and "Chinese" (13,250 restaurants) are overwhelmingly dominant, indicating high market saturation but also immense demand. Their average ratings are around 3.6.
+    * Cuisines like "Microbrewery" (4.40 avg rating), "Fine Dining" (4.17), "Japanese" (4.26), "Malaysian" (4.31), and "Modern Indian" (4.30) consistently achieve higher average ratings, often correlating with higher average costs. These represent premium or niche markets with high customer satisfaction.
+    * "Quick Bites" (14,255 restaurants) and "Fast Food" (6,589 restaurants) are high-volume, low-cost segments with average ratings around 3.5-3.6, reflecting a focus on affordability and convenience.
+* **Business Implications/Recommendations:**
+    * **Market Strategy:** Zomato can identify highly competitive, mature markets (e.g., North Indian) versus less saturated, high-potential niche markets (e.g., Japanese, Modern Indian). This informs strategic growth areas.
+    * **Restaurant Positioning:** New restaurants can use this to position themselves: compete on volume/price in saturated markets, or focus on quality/niche in less saturated, higher-rated segments.
+    * **Targeted Promotions:** Highlight high-rated niche cuisines to users seeking unique or premium experiences.
+* [View SQL Query](scripts/sql/cuisine_popularity_performance.sql)
 
+#### **Problem 3: Impact of Online Ordering and Table Booking on Restaurant Success**
 
--- Business Problem 2: Analyzing Cuisine Popularity and Performance
--- Question: What are the most popular cuisine types in terms of the number of restaurants offering them,
---           and how do their average ratings and costs compare?
+* **Business Question:** Does offering online ordering or table booking significantly impact a restaurant's average rating or its prevalence in the market?
+* **Key Findings/Insights:**
+    * Restaurants offering **Table Booking** (regardless of online order status) consistently achieve significantly higher average ratings (4.13 - 4.16) compared to those without (3.55 - 3.65). This strongly suggests that table booking correlates with a higher perceived quality of the dining experience.
+    * Online ordering is highly prevalent (over 27,000 restaurants) but, by itself, does not directly lead to higher ratings. It appears to be a baseline expectation for convenience.
+* **Business Implications/Recommendations:**
+    * **For Zomato's Partner Success Team:** Actively encourage and support restaurants in implementing table booking features, emphasizing its direct correlation with higher customer satisfaction and potentially better ratings.
+    * **For Restaurants:** Prioritize enhancing the dine-in experience and offering table booking as a key differentiator for quality perception. Online ordering is a necessity for reach, but not a primary quality driver.
+* [View SQL Query](scripts/sql/service_impact_analysis.sql)
 
--- Business Value:
--- - For Zomato: Helps identify dominant cuisine types, potential areas for new cuisine promotion, or gaps in offerings.
--- - For Restaurants: Provides insights into the competitive landscape within specific cuisine categories,
---   or helps identify less saturated but high-demand cuisines.
--- - For Investors: Spot trends in culinary preferences and market opportunities.
+#### **Problem 4: Geographical Analysis - Hotspots & Underserved Areas**
 
--- SQL Concepts Used:
--- - JOINs: Connecting `cuisines`, `restaurant_cuisines`, and `restaurants` to link cuisine types to restaurant data.
--- - COUNT(DISTINCT ...): Aggregates the number of *unique* restaurants offering each cuisine.
--- - AVG(): Calculates the average rating and average cost for two people for each cuisine.
--- - GROUP BY: Groups the results by `cuisine_name`.
--- - HAVING Clause: Filters out less common cuisines to focus on statistically significant categories.
--- - ORDER BY: Sorts to show the most popular and highest-rated cuisines first.
+* **Business Question:** Where are restaurants most concentrated (hotspots) in Bangalore? Are there areas with high density but low ratings (over-saturation/quality issues), or areas with high demand/ratings but fewer options (underserved markets)?
+* **Key Findings/Insights:**
+    * **Dominant Hotspots:** Localities like BTM (3,929 restaurants), Koramangala 5th Block (2,319), HSR (2,019), and Indiranagar (1,847) are major restaurant hubs.
+    * **High Quality & Density:** Koramangala 5th Block (Avg Rating 4.01) stands out as a vibrant area balancing high density with strong customer satisfaction.
+    * **High Density, Lower Rating:** BTM (Avg Rating 3.57) and Marathahalli (3.54) have very high restaurant counts but relatively lower average ratings, suggesting intense competition or a more value-driven market where quality might be inconsistent.
+    * **Premium Pockets:** Localities like Lavelle Road (Avg Rating 4.14, Avg Cost ₹1365) and St. Marks Road (Avg Rating 4.02) indicate concentrations of higher-rated, more expensive establishments.
+* **Business Implications/Recommendations:**
+    * **For Zomato's Sales & Marketing:** Tailor strategies for each locality. In high-density, lower-rated areas, focus on quality improvement initiatives or highlighting value. In high-quality hotspots, emphasize unique offerings and premium experiences.
+    * **For New Restaurant Ventures:** Provides crucial market intelligence for location scouting, advising on areas to avoid (high saturation, low ratings) or explore (balanced demand/quality, emerging premium zones).
+* [View SQL Query](scripts/sql/locality_performance_density.sql)
 
-SELECT
-    cz.cuisine_name,
-    COUNT(DISTINCT r.restaurant_id) AS number_of_restaurants,
-    AVG(r.rate) AS average_rating_for_cuisine,
-    AVG(r.cost_for_two) AS average_cost_for_cuisine
-FROM
-    cuisines cz
-JOIN
-    restaurant_cuisines rc ON cz.cuisine_id = rc.cuisine_id
-JOIN
-    restaurants r ON rc.restaurant_id = r.restaurant_id
-WHERE
-    r.rate IS NOT NULL -- Only consider restaurants with a valid rating
-GROUP BY
-    cz.cuisine_name
-HAVING
-    COUNT(DISTINCT r.restaurant_id) >= 20 -- Minimum threshold to focus on significant cuisine categories
-ORDER BY
-    number_of_restaurants DESC, -- Primary sort: most restaurants first
-    average_rating_for_cuisine DESC; -- Secondary sort: higher rating for tie-breaking
+#### **Problem 5: Cost vs. Rating Analysis (Value for Money)**
 
--- Business Problem 3: Impact of Online Ordering and Table Booking on Restaurant Success
--- Question: Does offering services like online ordering or table booking significantly impact a restaurant's
---           average rating or its prevalence in the market?
+* **Business Question:** What is the relationship between the average cost of a meal for two and customer rating? Can high quality be found at lower price points?
+* **Key Findings/Insights:**
+    * A strong, positive correlation exists: as the average cost increases, so does the average rating. "Luxury (₹1500+)" restaurants boast the highest average rating (4.16), while "Budget (< ₹300)" restaurants average 3.56. This indicates customers generally perceive higher quality with higher prices.
+    * The "Mid-Range (₹300 - ₹699)" segment has the largest volume of restaurants (21,915) and significant total votes (4M+), representing the mass market.
+    * The "Premium (₹700 - ₹1499)" segment, while having fewer restaurants (9,507) than Mid-Range, garnered the highest total votes (6.6M+), suggesting high engagement and popularity within this price bracket.
+* **Business Implications/Recommendations:**
+    * **Targeted User Recommendations:** Zomato can provide highly relevant recommendations based on user budget, with clear expectations of quality.
+    * **Pricing Strategy for Restaurants:** Reinforces that investing in quality and charging appropriately tends to be rewarded with higher customer satisfaction. It also highlights the high engagement in the "Premium" segment, which could be a target for new concepts.
+* [View SQL Query](scripts/sql/cost_vs_rating_analysis.sql)
 
--- Business Value:
--- - For Zomato: Helps advise partner restaurants on feature adoption, highlighting the benefits of certain services.
--- - For Restaurants: Informs strategic decision-making on investing in online presence or table booking systems.
--- - For Users: Provides insights into service availability and its correlation with perceived quality.
+#### **Problem 6: Restaurant Type Performance & Distribution**
 
--- SQL Concepts Used:
--- - CASE Statements: Creates new categorical dimensions (`online_order_status`, `table_booking_status`) based on boolean flags,
---   making the results more readable for business interpretation.
--- - COUNT() and AVG(): Aggregate functions to count restaurants and calculate average ratings for each service combination.
--- - GROUP BY: Groups the results by the combinations of online order and table booking status.
--- - ORDER BY: Sorts to show the most prevalent combinations first.
+* **Business Question:** How do different restaurant types (e.g., Casual Dining, Cafe, Quick Bites) perform in terms of average rating and cost? Which types are most prevalent, and which offer a higher-quality experience?
+* **Key Findings/Insights:**
+    * **Volume Leaders:** "Quick Bites" (14,255 restaurants) and "Casual Dining" (11,303 restaurants) dominate the market in terms of sheer numbers. Quick Bites are low-cost (₹329) with a 3.55 average rating, while Casual Dining is mid-cost (₹856) with a 3.80 average.
+    * **Highest Quality Types:** "Microbrewery" (4.40 avg rating), "Fine Dining" (4.17), "Pub" (4.10), and "Club" (4.05) consistently achieve the highest average ratings, often at a higher average cost, indicating a focus on premium experiences.
+    * **Value Types:** "Cafe" (3.87 avg rating, ₹642 avg cost) and "Dessert Parlor" (3.88 avg rating, ₹360 avg cost) offer good quality at moderate or lower price points.
+* **Business Implications/Recommendations:**
+    * **Zomato's Platform Strategy:** Tailor search filters and featured collections by restaurant type (e.g., "Top Cafes for a Quick Meet," "Best Pubs for a Night Out").
+    * **Restaurant Development:** Guides entrepreneurs on business models. High-volume types require efficiency; high-rated types demand focus on experience and quality.
+* [View SQL Query](scripts/sql/restaurant_type_performance.sql)
 
-SELECT
-    CASE WHEN r.online_order THEN 'Online Order Available' ELSE 'Online Order Not Available' END AS online_order_status,
-    CASE WHEN r.book_table THEN 'Table Booking Available' ELSE 'Table Booking Not Available' END AS table_booking_status,
-    COUNT(r.restaurant_id) AS number_of_restaurants,
-    AVG(r.rate) AS average_rating_for_group
-FROM
-    restaurants r
-WHERE
-    r.rate IS NOT NULL -- Only consider restaurants with a valid rating
-GROUP BY
-    r.online_order, r.book_table
-ORDER BY
-    number_of_restaurants DESC; -- Order by count to see the most common combinations first
+#### **Problem 7: Restaurant Distribution Across Cities**
 
--- Business Problem: Geographical Analysis - Hotspots & Underserved Areas
--- Question: Where are restaurants most concentrated (hotspots)? Are there localities within Bangalore that have a high
---           number of restaurants but surprisingly low average ratings (indicating over-saturation or quality issues)?
---           Conversely, are there areas with fewer restaurants but high demand/ratings, suggesting underserved markets?
-
--- Business Value:
--- - For Zomato: Optimizes marketing efforts, helps identify areas for new restaurant acquisition, or areas where
---   existing restaurants might need support.
--- - For New Restaurants/Investors: Informs location strategy for opening new establishments.
--- - For Users: Helps discover high-quality options in less obvious places.
-
--- SQL Concepts Used:
--- - JOINs: Combining `localities`, `restaurants`, and `cities` to link geographical data with restaurant performance.
--- - COUNT() and AVG(): Aggregate functions to calculate density (`number_of_restaurants`) and quality (`average_rating_in_locality`,
---   `average_cost_in_locality`) per locality.
--- - GROUP BY: Groups the results by each unique combination of `locality_name` and `city_name`.
--- - HAVING Clause: Filters out localities with very few restaurants, as their averages might not be representative.
--- - ORDER BY: Sorts the results to easily identify the densest areas and their quality.
-
-SELECT
-    l.locality_name,
-    c.city_name,
-    COUNT(r.restaurant_id) AS number_of_restaurants,
-    AVG(r.rate) AS average_rating_in_locality,
-    AVG(r.cost_for_two) AS average_cost_in_locality
-FROM
-    localities l
-JOIN
-    restaurants r ON l.locality_id = r.locality_id
-JOIN
-    cities c ON l.city_id = c.city_id
-WHERE
-    r.rate IS NOT NULL AND r.votes IS NOT NULL AND r.votes > 0 -- Only consider rated restaurants
-GROUP BY
-    l.locality_name, c.city_name
-HAVING
-    COUNT(r.restaurant_id) >= 10 -- Focus on localities with at least 10 restaurants for meaningful averages
-ORDER BY
-    number_of_restaurants DESC, -- Primary sort: most restaurants first (hotspots)
-    average_rating_in_locality DESC; -- Secondary sort: higher rating for tie-breaking
-
--- Business Problem: Cost vs. Rating Analysis (Value for Money)
--- Question: What is the relationship between the average cost of a meal for two at a restaurant and its customer rating?
---           Are more expensive restaurants always better rated, or can customers find high-quality experiences at more affordable prices?
-
--- Business Value:
--- - For Zomato: Enables creation of "Value for Money" collections, "Premium Dining" lists, or insights for users
---   looking for specific price points.
--- - For Restaurants: Helps understand where they stand in their price segment relative to customer perception,
---   informing pricing strategy.
--- - For Users: Guides dining choices based on budget and desired quality.
-
--- SQL Concepts Used:
--- - CASE Statement: The primary tool here, used to create custom, ordered categories (`cost_category`) based on
---   the `cost_for_two` numeric value. The numeric prefixes (e.g., '1.', '2.') are a common trick to ensure
---   correct alphabetical sorting in BI tools when the categories are strings.
--- - COUNT(), AVG(), SUM(), MIN(), MAX(): Standard aggregate functions to summarize data within each cost category.
--- - GROUP BY: Groups the results by the newly defined `cost_category`.
--- - ORDER BY: Sorts the categories by their minimum cost to ensure a logical progression (Budget to Luxury).
-
-SELECT
-    CASE
-        WHEN r.cost_for_two < 300 THEN '1. Budget (< ₹300)'
-        WHEN r.cost_for_two >= 300 AND r.cost_for_two < 700 THEN '2. Mid-Range (₹300 - ₹699)'
-        WHEN r.cost_for_two >= 700 AND r.cost_for_two < 1500 THEN '3. Premium (₹700 - ₹1499)'
-        WHEN r.cost_for_two >= 1500 THEN '4. Luxury (₹1500+)'
-        ELSE '5. Unknown Cost' -- Handles cases where cost_for_two might be NULL or unparsed
-    END AS cost_category,
-    COUNT(r.restaurant_id) AS number_of_restaurants,
-    AVG(r.rate) AS average_rating_in_category,
-    SUM(r.votes) AS total_votes_in_category,
-    MIN(r.cost_for_two) AS min_cost_in_category,
-    MAX(r.cost_for_two) AS max_cost_in_category
-FROM
-    restaurants r
-WHERE
-    r.rate IS NOT NULL AND r.votes IS NOT NULL AND r.votes > 0
-GROUP BY
-    cost_category
-ORDER BY
-    min_cost_in_category; -- Ensures categories are ordered logically by price
-
--- Business Problem: Restaurant Type Performance & Distribution
--- Question: How do different types of restaurants (e.g., Casual Dining, Cafe, Quick Bites, Pubs) perform
---           in terms of average rating and average cost? Which types are most prevalent, and which offer
---           a higher-quality experience?
-
--- Business Value:
--- - For Zomato: Enables categorization and recommendation of restaurants by type, helps identify popular types
---   for user search filters, or spots emerging/declining types.
--- - For Restaurants/Investors: Helps understand the competitive landscape and typical customer expectations
---   within a specific restaurant type, informing business models.
--- - For Users: Allows filtering search results based on desired dining experience.
-
--- SQL Concepts Used:
--- - JOIN: Connecting `restaurant_types` with `restaurants` to link type names to restaurant performance data.
--- - COUNT(), AVG(), SUM(): Aggregate functions to calculate the number of restaurants, average rating,
---   average cost, and total votes for each type.
--- - GROUP BY: Groups the results by `type_name`.
--- - HAVING Clause: Filters out less common restaurant types to focus on statistically significant categories.
--- - ORDER BY: Sorts to show the most prevalent and highest-rated types first.
-
-SELECT
-    rt.type_name AS restaurant_type,
-    COUNT(r.restaurant_id) AS number_of_restaurants,
-    AVG(r.rate) AS average_rating_by_type,
-    AVG(r.cost_for_two) AS average_cost_by_type,
-    SUM(r.votes) AS total_votes_by_type
-FROM
-    restaurant_types rt
-JOIN
-    restaurants r ON rt.restaurant_type_id = r.restaurant_type_id
-WHERE
-    r.rate IS NOT NULL AND r.votes IS NOT NULL AND r.votes > 0
-GROUP BY
-    rt.type_name
-HAVING
-    COUNT(r.restaurant_id) >= 10 -- Minimum threshold to focus on significant restaurant types
-ORDER BY
-    number_of_restaurants DESC, -- Primary sort: most common types first
-    average_rating_by_type DESC; -- Secondary sort: higher rating for tie-breaking
-
--- Business Problem: Restaurant Distribution Across Cities
--- Question: How are restaurants distributed across the different cities listed in the dataset? Which cities
---           have the most restaurants, and how do their average ratings and costs compare?
-
--- Business Value:
--- - For Zomato: Informs strategic market planning, resource allocation across cities, and helps identify
---   primary versus secondary markets.
--- - For Business Expansion: Guides decisions about expanding into new cities or focusing efforts in existing ones.
--- - For Users: Provides context on the overall dining scene in different cities.
-
--- SQL Concepts Used:
--- - JOIN: Connecting `cities` with `restaurants` to link city names to restaurant performance data.
--- - COUNT(), AVG(), SUM(): Aggregate functions to calculate the number of restaurants, average rating,
---   average cost, and total votes for each city.
--- - GROUP BY: Groups the results by `city_name`.
--- - ORDER BY: Sorts to show the cities with the most restaurants and highest ratings first.
-
-SELECT
-    c.city_name,
-    COUNT(r.restaurant_id) AS number_of_restaurants_in_city,
-    AVG(r.rate) AS average_rating_in_city,
-    AVG(r.cost_for_two) AS average_cost_in_city,
-    SUM(r.votes) AS total_votes_in_city
-FROM
-    cities c
-JOIN
-    restaurants r ON c.city_id = r.city_id
-WHERE
-    r.rate IS NOT NULL AND r.votes IS NOT NULL AND r.votes > 0 -- Only consider rated restaurants
-GROUP BY
-    c.city_name
-ORDER BY
-    number_of_restaurants_in_city DESC, -- Primary sort: most restaurants first
-    average_rating_in_city DESC;        -- Secondary sort: higher rating for tie-breaking
-
+* **Business Question:** How are restaurants distributed across the different cities (or major localities treated as cities in the dataset)? Which cities have the most restaurants, and how do their average ratings and costs compare?
+* **Key Findings/Insights:**
+    * The restaurant market is heavily concentrated in certain "cities" (major localities within Bangalore), with different blocks of **Koramangala** (7th, 4th, 5th, 6th blocks) and **BTM** leading in restaurant count (2,000+ each).
+    * Average ratings across most "cities" range from 3.5 to 3.8, with some upscale areas like **MG Road** (3.80 avg rating, ₹830 avg cost) and **Lavelle Road** (3.78 avg rating, ₹1365 avg cost) showing slightly higher quality and cost.
+    * Lower-rated, high-volume areas like **Electronic City** (3.49 avg rating) suggest a more budget-focused market or areas with higher competition.
+* **Business Implications/Recommendations:**
+    * **Strategic Market Focus:** Zomato can allocate sales, marketing, and operational resources based on market density and quality profiles of these "cities."
+    * **Expansion & Investment:** Provides a high-level overview for potential market expansion or investment decisions, highlighting areas with established dining scenes versus those with room for growth or quality improvement.
+* [View SQL Query](scripts/sql/city_distribution_performance.sql)
 ---
 
 ### **Phase 3: Interactive Business Intelligence Dashboard in Microsoft Power BI (UPCOMING)**
